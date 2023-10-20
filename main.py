@@ -9,106 +9,69 @@ from streamlit_folium import folium_static
 import requests
 import base64
 from io import StringIO
+import sqlite3
 
-GITHUB_REPO = "szeni23/JusyGame"
+DATABASE_NAME = "sightings.db"
 
 
-def push_to_github(filename, content, message="Update csv data"):
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
-    headers = {
-        "Authorization": f"token {TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        sha = response.json()['sha']
-        b64_content = base64.b64encode(content.encode()).decode()
-        data = {
-            "message": message,
-            "content": b64_content,
-            "sha": sha
-        }
-        response = requests.put(url, headers=headers, json=data)
-        if response.status_code == 200:
-            print("Successfully pushed to GitHub!")
+def create_connection():
+    conn = sqlite3.connect(DATABASE_NAME)
+    return conn
+
+
+def initialize_database():
+    with create_connection() as conn:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS totals
+                     (Name TEXT, TotalCarsSeen INTEGER, Streak INTEGER)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS history
+                     (Timestamp TEXT, Log TEXT, Latitude REAL, Longitude REAL)''')
+
+
+initialize_database()
+
+
+def load_totals_from_db():
+    with create_connection() as conn:
+        c = conn.cursor()
+        c.execute('SELECT * FROM totals')
+        rows = c.fetchall()
+        if rows:
+            return pd.DataFrame(rows, columns=["Name", "Total Cars Seen", "Streak"])
         else:
-            print("Failed to push to GitHub!")
-            print(response.content)
-    else:
-        print("Failed to retrieve content from GitHub!")
-        print(response.content)
+            default_data = {
+                "Name": ["Rico", "Anders", "Live"],
+                "Total Cars Seen": [0, 0, 0],
+                "Streak": [0, 0, 0]
+            }
+            save_totals_to_db(pd.DataFrame(default_data))
+            return pd.DataFrame(default_data)
 
 
-def fetch_from_github(filename):
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
-    headers = {
-        "Authorization": f"token {TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        b64_content = response.json()['content']
-        decoded_content = base64.b64decode(b64_content).decode()
-        return decoded_content
-    else:
-        print("Failed to retrieve content from GitHub!")
-        print(response.content)
-        return None
+def load_history_from_db():
+    with create_connection() as conn:
+        c = conn.cursor()
+        c.execute('SELECT * FROM history')
+        rows = c.fetchall()
+        if rows:
+            return pd.DataFrame(rows, columns=["Timestamp", "Log", "Latitude", "Longitude"])
+        else:
+            return pd.DataFrame(columns=["Timestamp", "Log", "Latitude", "Longitude"])
+
+
+def save_totals_to_db(df):
+    with create_connection() as conn:
+        df.to_sql('totals', conn, if_exists='replace', index=False)
+
+
+def save_history_to_db(df):
+    with create_connection() as conn:
+        df.to_sql('history', conn, if_exists='replace', index=False)
 
 
 csv_totals = "totals.csv"
 csv_history = "history.csv"
 location = get_geolocation()
-
-
-def load_totals():
-    csv_content = fetch_from_github(csv_totals)
-    if csv_content:
-        try:
-            df = pd.read_csv(StringIO(csv_content))
-            if "Streak" not in df.columns:
-                df["Streak"] = 0
-            return df
-        except Exception as e:
-            print(f"Error reading the CSV: {e}")
-            return pd.DataFrame({
-                "Name": ["Rico", "Anders", "Live"],
-                "Total Cars Seen": [0, 0, 0],
-                "Streak": [0, 0, 0]
-            })
-    else:
-        return pd.DataFrame({
-            "Name": ["Rico", "Anders", "Live"],
-            "Total Cars Seen": [0, 0, 0],
-            "Streak": [0, 0, 0]
-        })
-
-
-def load_history():
-    csv_content = fetch_from_github(csv_history)
-    if csv_content:
-        try:
-            df = pd.read_csv(StringIO(csv_content))
-            if df.empty:
-                return pd.DataFrame(columns=["Timestamp", "Log", "Latitude", "Longitude"])
-            return df
-        except Exception as e:
-            print(f"Error reading the CSV: {e}")
-            return pd.DataFrame(columns=["Timestamp", "Log", "Latitude", "Longitude"])
-    else:
-        return pd.DataFrame(columns=["Timestamp", "Log", "Latitude", "Longitude"])
-
-
-def save_to_csv_totals(df):
-    df.to_csv(csv_totals, index=False)
-    csv_data = df.to_csv(index=False)
-    push_to_github(csv_totals, csv_data, message="Updated totals.csv")
-
-
-def save_to_csv_history(df):
-    df.to_csv(csv_history, index=False)
-    csv_data = df.to_csv(index=False)
-    push_to_github(csv_history, csv_data, message="Updated history.csv")
 
 
 def get_city_from_coords(latitude, longitude):
@@ -124,67 +87,48 @@ def get_city_from_coords(latitude, longitude):
 
 
 def update_streaks(person):
-    last_entry = st.session_state.history[0] if st.session_state.history else None
-    if last_entry and person in last_entry['Log']:
-        if person == "Rico":
-            st.session_state.rico_streak += 1
-        elif person == "Anders":
-            st.session_state.anders_streak += 1
-        elif person == "Live":
-            st.session_state.live_streak += 1
-    else:
-        if person == "Rico":
-            st.session_state.rico_streak = 1
-        elif person == "Anders":
-            st.session_state.anders_streak = 1
-        elif person == "Live":
-            st.session_state.live_streak = 1
+    with create_connection() as conn:
+        c = conn.cursor()
 
-    if person == "Rico":
-        st.session_state.anders_streak = 0
-        st.session_state.live_streak = 0
-    elif person == "Anders":
-        st.session_state.rico_streak = 0
-        st.session_state.live_streak = 0
-    elif person == "Live":
-        st.session_state.rico_streak = 0
-        st.session_state.anders_streak = 0
+        c.execute("SELECT Streak FROM totals WHERE Name=?", (person,))
+        current_streak = c.fetchone()[0]
 
-    totals_data = {
-        "Name": ["Rico", "Anders", "Live"],
-        "Total Cars Seen": [st.session_state.rico_count, st.session_state.anders_count, st.session_state.live_count],
-        "Streak": [st.session_state.rico_streak, st.session_state.anders_streak, st.session_state.live_streak]
-    }
-    save_to_csv_totals(pd.DataFrame(totals_data))
+        last_entry = st.session_state.history[0] if st.session_state.history else None
+        if last_entry and person in last_entry['Log']:
+            current_streak += 1
+        else:
+            current_streak = 1
+
+        # Update the person's streak in the database
+        c.execute("UPDATE totals SET Streak=? WHERE Name=?", (current_streak, person))
 
 
 def get_highest_streak():
-    streak_data = {
-        "Rico": st.session_state.rico_streak,
-        "Anders": st.session_state.anders_streak,
-        "Live": st.session_state.live_streak
-    }
+    with create_connection() as conn:
+        c = conn.cursor()
 
-    highest_streak_person = max(streak_data, key=streak_data.get)
-    highest_streak_count = streak_data[highest_streak_person]
+        # Fetch all streaks and find the max
+        c.execute("SELECT Name, Streak FROM totals")
+        all_streaks = c.fetchall()
+        highest_streak = max(all_streaks, key=lambda x: x[1])
 
-    return highest_streak_person, highest_streak_count
+        return highest_streak
 
 
 def update_streaks_on_delete(person):
-    consecutive_entries = [entry for entry in st.session_state.history if person in entry['Log']]
-    current_streak = len(consecutive_entries)
+    with create_connection() as conn:
+        c = conn.cursor()
 
-    if person == "Rico":
-        st.session_state.rico_streak = current_streak
-    elif person == "Anders":
-        st.session_state.anders_streak = current_streak
-    elif person == "Live":
-        st.session_state.live_streak = current_streak
+        # Check recent history for streak
+        consecutive_entries = [entry for entry in st.session_state.history if person in entry['Log']]
+        current_streak = len(consecutive_entries)
+
+        # Update the person's streak in the database
+        c.execute("UPDATE totals SET Streak=? WHERE Name=?", (current_streak, person))
 
 
-totals_df = load_totals()
-history_df = load_history()
+totals_df = load_totals_from_db()
+history_df = load_history_from_db()
 
 if 'rico_count' not in st.session_state:
     st.session_state.rico_count = totals_df.loc[totals_df["Name"] == "Rico", "Total Cars Seen"].values[0]
@@ -238,8 +182,8 @@ if st.sidebar.button("Submit"):
         "Streak": [st.session_state.rico_streak, st.session_state.anders_streak, st.session_state.live_streak]
     }
 
-    save_to_csv_totals(pd.DataFrame(totals_data))
-    save_to_csv_history(pd.DataFrame(st.session_state.history))
+    save_totals_to_db(pd.DataFrame(totals_data))
+    save_history_to_db(pd.DataFrame(st.session_state.history))
     update_streaks(person)
 
     st.experimental_rerun()
@@ -379,8 +323,8 @@ for idx, log_entry in enumerate(st.session_state.history[:5]):
                                     st.session_state.live_count],
                 "Streak": [st.session_state.rico_streak, st.session_state.anders_streak, st.session_state.live_streak]
             }
-            save_to_csv_totals(pd.DataFrame(totals_data))
-            save_to_csv_history(pd.DataFrame(st.session_state.history))
+            save_totals_to_db(pd.DataFrame(totals_data))
+            save_history_to_db(pd.DataFrame(st.session_state.history))
             st.experimental_rerun()
 
 
@@ -426,6 +370,6 @@ if st.button("Reset All Counts"):
         "Total Cars Seen": [st.session_state.rico_count, st.session_state.anders_count, st.session_state.live_count],
         "Streak": [st.session_state.rico_streak, st.session_state.anders_streak, st.session_state.live_streak]
     }
-    save_to_csv_totals(pd.DataFrame(totals_data))
-    save_to_csv_history(pd.DataFrame(st.session_state.history))
+    save_totals_to_db(pd.DataFrame(totals_data))
+    save_history_to_db(pd.DataFrame(st.session_state.history))
     st.experimental_rerun()
