@@ -10,6 +10,8 @@ import requests
 import base64
 from io import StringIO
 
+GITHUB_REPO = "szeni23/JusyGame"
+
 
 def push_to_github(filename, content, message="Update csv data"):
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
