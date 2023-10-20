@@ -14,12 +14,17 @@ location = get_geolocation()
 
 def load_totals():
     try:
-        return pd.read_csv(csv_totals)
+        df = pd.read_csv(csv_totals)
+        if "Streak" not in df.columns:
+            df["Streak"] = 0
+        return df
     except FileNotFoundError:
         return pd.DataFrame({
             "Name": ["Rico", "Anders", "Live"],
-            "Total Cars Seen": [0, 0, 0]
+            "Total Cars Seen": [0, 0, 0],
+            "Streak": [0, 0, 0]
         })
+
 
 
 def load_history():
@@ -52,6 +57,66 @@ def get_city_from_coords(latitude, longitude):
         return "Unknown Location"
 
 
+def update_streaks(person):
+    last_entry = st.session_state.history[0] if st.session_state.history else None
+    if last_entry and person in last_entry['Log']:
+        if person == "Rico":
+            st.session_state.rico_streak += 1
+        elif person == "Anders":
+            st.session_state.anders_streak += 1
+        elif person == "Live":
+            st.session_state.live_streak += 1
+    else:
+        if person == "Rico":
+            st.session_state.rico_streak = 1
+        elif person == "Anders":
+            st.session_state.anders_streak = 1
+        elif person == "Live":
+            st.session_state.live_streak = 1
+
+    if person == "Rico":
+        st.session_state.anders_streak = 0
+        st.session_state.live_streak = 0
+    elif person == "Anders":
+        st.session_state.rico_streak = 0
+        st.session_state.live_streak = 0
+    elif person == "Live":
+        st.session_state.rico_streak = 0
+        st.session_state.anders_streak = 0
+
+    totals_data = {
+        "Name": ["Rico", "Anders", "Live"],
+        "Total Cars Seen": [st.session_state.rico_count, st.session_state.anders_count, st.session_state.live_count],
+        "Streak": [st.session_state.rico_streak, st.session_state.anders_streak, st.session_state.live_streak]
+    }
+    save_to_csv_totals(pd.DataFrame(totals_data))
+
+
+def get_highest_streak():
+    streak_data = {
+        "Rico": st.session_state.rico_streak,
+        "Anders": st.session_state.anders_streak,
+        "Live": st.session_state.live_streak
+    }
+
+    highest_streak_person = max(streak_data, key=streak_data.get)
+    highest_streak_count = streak_data[highest_streak_person]
+
+    return highest_streak_person, highest_streak_count
+
+
+def update_streaks_on_delete(person):
+    consecutive_entries = [entry for entry in st.session_state.history if person in entry['Log']]
+    current_streak = len(consecutive_entries)
+
+    if person == "Rico":
+        st.session_state.rico_streak = current_streak
+    elif person == "Anders":
+        st.session_state.anders_streak = current_streak
+    elif person == "Live":
+        st.session_state.live_streak = current_streak
+
+
 totals_df = load_totals()
 history_df = load_history()
 
@@ -67,20 +132,52 @@ if 'live_count' not in st.session_state:
 if 'history' not in st.session_state:
     st.session_state.history = history_df.to_dict(orient='records')
 
-st.sidebar.header('Jucy Car Counters 🏁')
+if 'rico_streak' not in st.session_state:
+    st.session_state.rico_streak = totals_df.loc[totals_df["Name"] == "Rico", "Streak"].values[0]
 
-st.sidebar.markdown(
-    f'**Rico** 🚗: <span style="color:red;font-size:1.2em;">{st.session_state.rico_count}</span>',
-    unsafe_allow_html=True
-)
-st.sidebar.markdown(
-    f'**Anders** 🚕: <span style="color:darkblue;font-size:1.2em;">{st.session_state.anders_count}</span>',
-    unsafe_allow_html=True
-)
-st.sidebar.markdown(
-    f'**Live** 🚙: <span style="color:blue;font-size:1.2em;">{st.session_state.live_count}</span>',
-    unsafe_allow_html=True
-)
+if 'anders_streak' not in st.session_state:
+    st.session_state.anders_streak = totals_df.loc[totals_df["Name"] == "Anders", "Streak"].values[0]
+
+if 'live_streak' not in st.session_state:
+    st.session_state.live_streak = totals_df.loc[totals_df["Name"] == "Live", "Streak"].values[0]
+
+st.sidebar.header('Make a Sighting 🚨')
+
+person = st.sidebar.selectbox("Select a person", ["Rico", "Anders", "Live"])
+
+if st.sidebar.button("Submit"):
+    timestamp = datetime.now().strftime('%Y-%m-%d | %H:%M')
+
+    latitude = location['coords']['latitude']
+    longitude = location['coords']['longitude']
+
+    if person == "Rico":
+        st.session_state.rico_count += 1
+    elif person == "Anders":
+        st.session_state.anders_count += 1
+    elif person == "Live":
+        st.session_state.live_count += 1
+
+    new_log = {
+        "Timestamp": timestamp,
+        "Log": person,
+        "Latitude": location['coords']['latitude'] if location else None,
+        "Longitude": location['coords']['longitude'] if location else None
+    }
+    st.session_state.history.insert(0, new_log)
+
+    totals_data = {
+        "Name": ["Rico", "Anders", "Live"],
+        "Total Cars Seen": [st.session_state.rico_count, st.session_state.anders_count, st.session_state.live_count],
+        "Streak": [st.session_state.rico_streak, st.session_state.anders_streak, st.session_state.live_streak]
+    }
+
+    save_to_csv_totals(pd.DataFrame(totals_data))
+    save_to_csv_history(pd.DataFrame(st.session_state.history))
+    update_streaks(person)
+
+
+    st.experimental_rerun()
 
 sorted_counts = sorted(
     [('Rico', st.session_state.rico_count),
@@ -135,44 +232,37 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
-st.sidebar.header('Make a Sighting 🚨')
 
-person = st.sidebar.selectbox("Select a person", ["Rico", "Anders", "Live"])
+highest_streak_person, highest_streak_count = get_highest_streak()
 
-if st.sidebar.button("Submit"):
-    log = None
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+st.sidebar.markdown("""
+<style>
+.streak-card {
+    background-color: #ffeca4;  
+    padding: 10px 15px;
+    margin: 10px 0px;
+    border-radius: 15px;
+    text-align: center;
+}
+</style>
+""", unsafe_allow_html=True)
 
-    latitude = location['coords']['latitude']
-    longitude = location['coords']['longitude']
+if highest_streak_count == 0:
+    st.sidebar.markdown(f"""
+    <div class="streak-card">
+        <h3>🚫 No Streaks Yet 🚫</h3>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.sidebar.markdown(f"""
+    <div class="streak-card">
+        <h3>🔥 Current Streak Champion 🔥</h3>
+        <h2>{highest_streak_person}</h2>
+        <p>Streak: {highest_streak_count} Sightings</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    if person == "Rico":
-        st.session_state.rico_count += 1
-        log = f"Added 1 sighting for {person}."
-    elif person == "Anders":
-        st.session_state.anders_count += 1
-        log = f"Added 1 sighting for {person}."
-    elif person == "Live":
-        st.session_state.live_count += 1
-        log = f"Added 1 sighting for {person}."
-
-    if log:
-        new_log = {
-            "Timestamp": timestamp,
-            "Log": log,
-            "Latitude": location['coords']['latitude'] if location else None,
-            "Longitude": location['coords']['longitude'] if location else None
-        }
-        st.session_state.history.insert(0, new_log)
-
-    totals_data = {
-        "Name": ["Rico", "Anders", "Live"],
-        "Total Cars Seen": [st.session_state.rico_count, st.session_state.anders_count, st.session_state.live_count]
-    }
-    save_to_csv_totals(pd.DataFrame(totals_data))
-    save_to_csv_history(pd.DataFrame(st.session_state.history))
-
-    st.experimental_rerun()
+st.subheader('Jucy Car Game 🚗🃏')
 
 chart_data = {
     "Person": ["Rico", "Anders", "Live"],
@@ -185,14 +275,13 @@ chart = alt.Chart(chart_df).mark_bar().encode(
     x='Person',
     y='Sightings',
     color='Person'
-).properties(
-    title='Jucy Car Sightings Visualization'
 )
 
 st.altair_chart(chart, use_container_width=True)
 
 st.subheader('History Log')
 
+# Display the last 5 actions with a delete button for each log entry
 for idx, log_entry in enumerate(st.session_state.history[:5]):
     city = get_city_from_coords(log_entry['Latitude'], log_entry['Longitude'])
     col1, col2 = st.columns([5, 1])  # adjust the ratio as needed
@@ -204,30 +293,27 @@ for idx, log_entry in enumerate(st.session_state.history[:5]):
         if col2.button("Delete", key=f"delete_{idx}"):
             log_content = st.session_state.history[idx]['Log']
 
+            person_deleted = None
             if "Rico" in log_content:
-                if "Added" in log_content:
-                    st.session_state.rico_count -= 1
-                else:
-                    st.session_state.rico_count += 1
+                st.session_state.rico_count -= 1
+                person_deleted = "Rico"
             elif "Anders" in log_content:
-                if "Added" in log_content:
-                    st.session_state.anders_count -= 1
-                else:
-                    st.session_state.anders_count += 1
+                st.session_state.anders_count -= 1
+                person_deleted = "Anders"
             elif "Live" in log_content:
-                if "Added" in log_content:
-                    st.session_state.live_count -= 1
-                else:
-                    st.session_state.live_count += 1
+                st.session_state.live_count -= 1
+                person_deleted = "Live"
 
-            # Delete the log entry
             del st.session_state.history[idx]
 
-            # Save the updated totals and history to the CSVs
+            if person_deleted:
+                update_streaks_on_delete(person_deleted)
+
             totals_data = {
                 "Name": ["Rico", "Anders", "Live"],
                 "Total Cars Seen": [st.session_state.rico_count, st.session_state.anders_count,
-                                    st.session_state.live_count]
+                                    st.session_state.live_count],
+                "Streak": [st.session_state.rico_streak, st.session_state.anders_streak, st.session_state.live_streak]
             }
             save_to_csv_totals(pd.DataFrame(totals_data))
             save_to_csv_history(pd.DataFrame(st.session_state.history))
@@ -267,10 +353,14 @@ if st.button("Reset All Counts"):
     st.session_state.rico_count = 0
     st.session_state.anders_count = 0
     st.session_state.live_count = 0
+    st.session_state.rico_streak = 0
+    st.session_state.anders_streak = 0
+    st.session_state.live_streak = 0
     st.session_state.history = []
     totals_data = {
         "Name": ["Rico", "Anders", "Live"],
-        "Total Cars Seen": [st.session_state.rico_count, st.session_state.anders_count, st.session_state.live_count]
+        "Total Cars Seen": [st.session_state.rico_count, st.session_state.anders_count, st.session_state.live_count],
+        "Streak": [st.session_state.rico_streak, st.session_state.anders_streak, st.session_state.live_streak]
     }
     save_to_csv_totals(pd.DataFrame(totals_data))
     save_to_csv_history(pd.DataFrame(st.session_state.history))
