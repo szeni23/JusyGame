@@ -66,7 +66,11 @@ def save_totals_to_db(df):
 
 def save_history_to_db(df):
     with create_connection() as conn:
-        df.to_sql('history', conn, if_exists='replace', index=False)
+        if not df.empty:
+            df.to_sql('history', conn, if_exists='replace', index=False)
+        else:
+            conn.execute("DELETE FROM history")
+
 
 
 csv_totals = "totals.csv"
@@ -90,14 +94,17 @@ def update_streaks(person):
     with create_connection() as conn:
         c = conn.cursor()
 
-        c.execute("SELECT Streak FROM totals WHERE Name=?", (person,))
-        current_streak = c.fetchone()[0]
+        # Start by assuming we've broken the streak
+        current_streak = 0
 
-        last_entry = st.session_state.history[0] if st.session_state.history else None
-        if last_entry and person in last_entry['Log']:
-            current_streak += 1
-        else:
-            current_streak = 1
+        # Check for recent entries to determine the streak
+        consecutive_entries = [entry for entry in st.session_state.history if person in entry['Log']]
+
+        for entry in consecutive_entries:
+            if person in entry['Log']:
+                current_streak += 1
+            else:
+                break
 
         # Update the person's streak in the database
         c.execute("UPDATE totals SET Streak=? WHERE Name=?", (current_streak, person))
@@ -119,11 +126,16 @@ def update_streaks_on_delete(person):
     with create_connection() as conn:
         c = conn.cursor()
 
-        # Check recent history for streak
-        consecutive_entries = [entry for entry in st.session_state.history if person in entry['Log']]
-        current_streak = len(consecutive_entries)
+        current_streak = 0
 
-        # Update the person's streak in the database
+        consecutive_entries = [entry for entry in st.session_state.history if person in entry['Log']]
+
+        for entry in consecutive_entries:
+            if person in entry['Log']:
+                current_streak += 1
+            else:
+                break
+
         c.execute("UPDATE totals SET Streak=? WHERE Name=?", (current_streak, person))
 
 
