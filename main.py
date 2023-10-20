@@ -6,6 +6,53 @@ from geopy.geocoders import Nominatim
 from streamlit_js_eval import get_geolocation
 import folium
 from streamlit_folium import folium_static
+import requests
+import base64
+from io import StringIO
+
+
+def push_to_github(filename, content, message="Update csv data"):
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
+    headers = {
+        "Authorization": f"token {TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        sha = response.json()['sha']
+        b64_content = base64.b64encode(content.encode()).decode()
+        data = {
+            "message": message,
+            "content": b64_content,
+            "sha": sha
+        }
+        response = requests.put(url, headers=headers, json=data)
+        if response.status_code == 200:
+            print("Successfully pushed to GitHub!")
+        else:
+            print("Failed to push to GitHub!")
+            print(response.content)
+    else:
+        print("Failed to retrieve content from GitHub!")
+        print(response.content)
+
+
+def fetch_from_github(filename):
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
+    headers = {
+        "Authorization": f"token {TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        b64_content = response.json()['content']
+        decoded_content = base64.b64decode(b64_content).decode()
+        return decoded_content
+    else:
+        print("Failed to retrieve content from GitHub!")
+        print(response.content)
+        return None
+
 
 csv_totals = "totals.csv"
 csv_history = "history.csv"
@@ -13,12 +60,21 @@ location = get_geolocation()
 
 
 def load_totals():
-    try:
-        df = pd.read_csv(csv_totals)
-        if "Streak" not in df.columns:
-            df["Streak"] = 0
-        return df
-    except FileNotFoundError:
+    csv_content = fetch_from_github(csv_totals)
+    if csv_content:
+        try:
+            df = pd.read_csv(StringIO(csv_content))
+            if "Streak" not in df.columns:
+                df["Streak"] = 0
+            return df
+        except Exception as e:
+            print(f"Error reading the CSV: {e}")
+            return pd.DataFrame({
+                "Name": ["Rico", "Anders", "Live"],
+                "Total Cars Seen": [0, 0, 0],
+                "Streak": [0, 0, 0]
+            })
+    else:
         return pd.DataFrame({
             "Name": ["Rico", "Anders", "Live"],
             "Total Cars Seen": [0, 0, 0],
@@ -26,23 +82,31 @@ def load_totals():
         })
 
 
-
 def load_history():
-    try:
-        df = pd.read_csv(csv_history)
-        if df.empty:
+    csv_content = fetch_from_github(csv_history)
+    if csv_content:
+        try:
+            df = pd.read_csv(StringIO(csv_content))
+            if df.empty:
+                return pd.DataFrame(columns=["Timestamp", "Log", "Latitude", "Longitude"])
+            return df
+        except Exception as e:
+            print(f"Error reading the CSV: {e}")
             return pd.DataFrame(columns=["Timestamp", "Log", "Latitude", "Longitude"])
-        return df
-    except (FileNotFoundError, pd.errors.EmptyDataError):
+    else:
         return pd.DataFrame(columns=["Timestamp", "Log", "Latitude", "Longitude"])
 
 
 def save_to_csv_totals(df):
     df.to_csv(csv_totals, index=False)
+    csv_data = df.to_csv(index=False)
+    push_to_github(csv_totals, csv_data, message="Updated totals.csv")
 
 
 def save_to_csv_history(df):
     df.to_csv(csv_history, index=False)
+    csv_data = df.to_csv(index=False)
+    push_to_github(csv_history, csv_data, message="Updated history.csv")
 
 
 def get_city_from_coords(latitude, longitude):
@@ -176,7 +240,6 @@ if st.sidebar.button("Submit"):
     save_to_csv_history(pd.DataFrame(st.session_state.history))
     update_streaks(person)
 
-
     st.experimental_rerun()
 
 sorted_counts = sorted(
@@ -231,7 +294,6 @@ else:
         <p>{sorted_counts[0][1]} Sightings</p>
     </div>
     """, unsafe_allow_html=True)
-
 
 highest_streak_person, highest_streak_count = get_highest_streak()
 
