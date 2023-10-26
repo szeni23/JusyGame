@@ -10,6 +10,10 @@ import requests
 import base64
 from io import StringIO
 import sqlite3
+from github import Github
+
+g = Github("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")
+repo = g.get_repo("szeni23/JusyGame")
 
 DATABASE_NAME = "sightings.db"
 
@@ -138,6 +142,34 @@ def update_streaks_on_delete(person):
 
         c.execute("UPDATE totals SET Streak=? WHERE Name=?", (current_streak, person))
 
+def update_file_on_github(filename, content):
+    try:
+        # Get the file from the repo
+        file = repo.get_contents(filename)
+
+        # Update the file
+        repo.update_file(file.path, f"update {filename}", content, file.sha)
+        st.success(f'Successfully updated {filename} on GitHub.')
+    except Exception as e:
+        st.error(f'An error occurred: {e}')
+
+
+def save_data_to_github():
+    # Load data from the database
+    totals_df = load_totals_from_db()
+    history_df = load_history_from_db()
+
+    # Convert DataFrames to CSV
+    csv_totals = totals_df.to_csv(index=False)
+    csv_history = history_df.to_csv(index=False)
+
+    # Encode CSV content to Base64 for GitHub
+    b64_totals = base64.b64encode(csv_totals.encode()).decode()
+    b64_history = base64.b64encode(csv_history.encode()).decode()
+
+    # Update files on GitHub
+    update_file_on_github("totals.csv", b64_totals)
+    update_file_on_github("history.csv", b64_history)
 
 totals_df = load_totals_from_db()
 history_df = load_history_from_db()
@@ -385,3 +417,8 @@ if st.button("Reset All Counts"):
     save_totals_to_db(pd.DataFrame(totals_data))
     save_history_to_db(pd.DataFrame(st.session_state.history))
     st.experimental_rerun()
+
+
+# Trigger the function to save data to GitHub
+if st.button('Update GitHub'):
+    save_data_to_github()
