@@ -12,8 +12,6 @@ from io import StringIO
 import sqlite3
 from github import Github
 
-g = Github("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")
-repo = g.get_repo("szeni23/JusyGame")
 
 DATABASE_NAME = "sightings.db"
 
