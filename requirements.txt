@@ -5,3 +5,4 @@ pandas==2.0.3
 streamlit==1.25.0
 streamlit_folium==0.15.0
 streamlit_js_eval==0.1.5
+PyGithub==1.59.0
